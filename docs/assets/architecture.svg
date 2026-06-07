@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 520" role="img" aria-labelledby="title desc">
+  <title id="title">revoq same-host IPC architecture</title>
+  <desc id="desc">A single writer process appends frames into memory-mapped journal pages. Reader processes independently acquire committed frame lengths, then read metadata and payload.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .bg { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; filter: url(#shadow); }
+      .journal { fill: #f0fdfa; stroke: #0f766e; stroke-width: 2.5; filter: url(#shadow); }
+      .frame { fill: #ffffff; stroke: #99f6e4; stroke-width: 1.5; }
+      .header { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 1.5; }
+      .publish { fill: #fff7ed; stroke: #fb923c; stroke-width: 1.5; }
+      .text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .muted { fill: #475569; }
+      .small { font-size: 15px; }
+      .body { font-size: 17px; }
+      .label { font-size: 19px; font-weight: 700; }
+      .title { font-size: 28px; font-weight: 800; }
+      .arrow { stroke: #0f766e; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .thin-arrow { stroke: #0f766e; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1040" height="520" rx="18"/>
+  <text class="text title" x="40" y="54">revoq same-host IPC journal</text>
+  <text class="text muted body" x="40" y="84">one writer publishes committed frames; each reader advances independently</text>
+
+  <rect class="panel" x="42" y="138" width="205" height="184" rx="12"/>
+  <text class="text label" x="72" y="178">Writer process</text>
+  <text class="text body" x="72" y="210">JournalWriter</text>
+  <text class="text muted small" x="72" y="238">single hot path</text>
+  <text class="text muted small" x="72" y="263">optional pinned core</text>
+  <text class="text muted small" x="72" y="288">no per-message syscall</text>
+
+  <rect class="journal" x="320" y="116" width="430" height="230" rx="14"/>
+  <text class="text label" x="350" y="156">Memory-mapped journal pages</text>
+  <text class="text muted small" x="350" y="181">file-backed shared mapping</text>
+
+  <rect class="header" x="352" y="212" width="92" height="58" rx="8"/>
+  <text class="text small" x="369" y="247">Page</text>
+  <text class="text small" x="362" y="264">header</text>
+
+  <rect class="frame" x="460" y="212" width="92" height="58" rx="8"/>
+  <text class="text small" x="481" y="247">frame</text>
+  <text class="text muted small" x="482" y="264">N</text>
+
+  <rect class="frame" x="566" y="212" width="92" height="58" rx="8"/>
+  <text class="text small" x="587" y="247">frame</text>
+  <text class="text muted small" x="588" y="264">N+1</text>
+
+  <rect class="frame" x="672" y="212" width="42" height="58" rx="8"/>
+  <text class="text small" x="686" y="249">...</text>
+
+  <rect class="frame" x="360" y="292" width="122" height="34" rx="7"/>
+  <text class="text small" x="383" y="315">metadata</text>
+  <rect class="frame" x="492" y="292" width="122" height="34" rx="7"/>
+  <text class="text small" x="525" y="315">payload</text>
+  <rect class="publish" x="624" y="292" width="92" height="34" rx="7"/>
+  <text class="text small" x="645" y="315">length</text>
+
+  <path class="arrow" d="M 250 230 C 282 230 286 230 314 230"/>
+  <text class="text small" x="265" y="210">append</text>
+
+  <rect class="panel" x="818" y="114" width="182" height="94" rx="12"/>
+  <text class="text label" x="846" y="152">Reader 0</text>
+  <text class="text muted small" x="846" y="181">JournalReader</text>
+
+  <rect class="panel" x="818" y="258" width="182" height="94" rx="12"/>
+  <text class="text label" x="846" y="296">Reader N</text>
+  <text class="text muted small" x="846" y="325">JournalReader</text>
+
+  <path class="arrow" d="M 754 180 C 782 180 790 164 812 164"/>
+  <path class="arrow" d="M 754 278 C 782 278 790 306 812 306"/>
+  <text class="text small" x="772" y="226">read committed frames</text>
+
+  <path class="thin-arrow" d="M 420 390 C 504 370 606 370 670 331"/>
+  <text class="text body" x="126" y="400">1. writer fills metadata and payload</text>
+  <text class="text body" x="126" y="430">2. writer stores length last with release semantics</text>
+  <text class="text body" x="126" y="460">3. reader acquire-loads length before touching frame data</text>
+
+  <rect x="40" y="480" width="960" height="1.5" fill="#cbd5e1"/>
+  <text class="text muted small" x="40" y="504">Same host only. Slow, restarted, or crashed readers do not stall the writer.</text>
+</svg>

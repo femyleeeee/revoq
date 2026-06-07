@@ -6,77 +6,39 @@
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](#quick-start)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-A file-backed, memory-mapped **journal** for handing off messages from a single
-writer to multiple independent reader processes on the same host, with bounded
-and predictable tail latency.
+A file-backed, memory-mapped **IPC journal** for low-latency same-host trading
+systems.
 
-revoq is the transport primitive [RevoRacer](https://revoracer.com) uses to move
-market-data and execution-style messages between processes. It is compact, C++23,
-and built around one idea: publish a frame with release semantics, read it with
-acquire semantics, and keep the hot path free of locks and allocation.
+## At a glance
 
-## The problem it solves
+- Open-source transport primitive behind [RevoRacer](https://revoracer.com)
+  infrastructure.
+- Same-host IPC for market data, execution events, strategy signals, and
+  telemetry.
+- One hot-path writer per journal, many independent readers; slow readers do not
+  stall the writer.
+- Memory-mapped, file-backed pages with no per-message syscall.
+- Release/acquire publication: payload first, `length` last.
+- C++23 core, optional Python bindings, Linux tuned path, Apache-2.0 license.
 
-Passing messages between processes is easy. Passing them with a tail latency you
-can put in front of a trading desk is not. revoq is built around the constraints
-that actually shape that tail:
+## Design limits
 
-- **Single producer per journal.** One writer owns a journal and appends frames.
-  A serialized multi-writer policy exists, but the design target — and the
-  numbers — are for the single-writer hot path.
-- **Independent reader processes.** Readers are separate OS processes that join a
-  journal and track their own position. A slow, restarting, or crashed reader
-  does not stall the writer.
-- **Memory-mapped pages.** Journals are page files mapped into each process.
-  Handoff is a store and a load against shared memory, not a syscall per message.
-- **Explicit publication.** The writer fills a frame, then publishes its length
-  last with `memory_order_release`. The reader acquires the length before it
-  touches metadata or payload. Visibility is a stated rule, not an accident.
-- **No silent host reconfiguration.** The tuned path exposes CPU pinning,
-  real-time priority, and hugepages as explicit knobs. revoq never quietly
-  changes your machine to flatter a benchmark.
+revoq targets one latency-sensitive producer publishing committed frames to
+independent same-host consumers. The limits are intentional:
 
-## What it is *not*
-
-> [!IMPORTANT]
-> The limits below matter more than the feature list. If one of them is a
-> dealbreaker for you, revoq is the wrong tool — and we would rather you know now.
-
-- **Not a network transport.** revoq is same-host IPC over mapped files. It does
-  not cross machines.
-- **Not multi-producer-first.** If you need a lock-free MPSC queue, this is the
-  wrong tool. The multi-writer policy serializes writers; it is not the design
-  center.
-- **Not magic on an untuned box.** Portable mode runs anywhere and is fine for
-  functional checks, but the tail-latency story requires Linux, isolated cores,
-  and hugepages. revoq makes that requirement explicit rather than hiding it.
-- **Not yet API-stable.** This is `0.1.0`. The core is exercised by tests, but
-  signatures may still change.
+- **Not a network transport.** revoq is same-host IPC over mapped files.
+- **Not lock-free MPSC.** The multi-writer policy serializes writers.
+- **Not a latency guarantee on an untuned box.** Portable mode is for functional
+  checks; the tail-latency story requires Linux, isolated cores, and hugepages.
+- **Not yet API-stable.** This is `0.1.0`; signatures may still change.
 
 ## Architecture
 
-```
-  writer process                                reader processes
-  (pinned core)                                 (independent, same host)
+![revoq architecture: a single writer publishes frames into memory-mapped journal pages; independent readers acquire committed frame lengths and read payloads](docs/assets/architecture.svg)
 
-  ┌───────────────┐                           ┌───────────────┐
-  │ JournalWriter │                           │ JournalReader │  ← reader 0
-  └───────┬───────┘                           └───────▲───────┘
-          │                                           │
-          │  ┌──────────────────────────────────────┐│         ┌───────────────┐
-          └─▶│  memory-mapped journal pages          ├┴────────▶│ JournalReader │  ← reader N
-             │  [ PageHeader │ frame │ frame │ … ]    │          └───────────────┘
-             └──────────────────────────────────────┘
-            ① release-store the frame length         ② acquire-load the frame length
-               (publish: payload first, length last)    (read metadata + payload only once committed)
-```
-
-- `JournalWriter` appends frames to a destination journal.
-- `JournalReader` joins one or more journals and reads committed frames.
-- A frame carries `length` (published last), `msg_type`, `flags`, `sequence`,
-  `gen_time`, an optional `event_time`, and payload bytes.
-- Pages have a fixed header and `FRAME_ALIGNMENT`-aligned frames; the writer
-  drops a `PageEnd` sentinel when it rotates to the next page.
+`JournalWriter` appends aligned frames to memory-mapped page files;
+`JournalReader` joins journals and reads committed frames. Each frame carries
+`length` (published last), message metadata, timestamps, and payload bytes.
 
 See [docs/architecture.md](docs/architecture.md),
 [docs/memory_model.md](docs/memory_model.md), and
@@ -84,16 +46,12 @@ See [docs/architecture.md](docs/architecture.md),
 
 ## Correctness
 
-The scariest part of code like this is concurrent visibility. revoq pins that
-down with a single publication rule (writer reserves → fills metadata and
-payload → release-stores `length`; reader acquire-loads `length` → reads the rest
-only once committed) and a test suite that targets it directly:
+The core publication rule is tested directly: reserve a slot, fill metadata and
+payload, release-store `length`; acquire-load `length`, then read the committed
+frame.
 
-- `test_publish_ordering` — the release/acquire publication contract.
-- `test_multiprocess` — a real cross-process writer/reader handoff.
-- `test_journal_writer_resume` — recovery and resume against existing pages.
-- `test_frame_header`, `test_journal_reader`, `test_typed_reader`,
-  `test_hugepage`, plus Python round-trip and reader/writer tests.
+Tests cover publication ordering, multiprocess handoff, resume/recovery, frame
+and reader behavior, hugepages, typed dispatch, and Python round trips.
 
 ```bash
 CXX=/usr/bin/clang++-20 ./build.sh test
@@ -168,8 +126,12 @@ on failure and prints an `ok ...` line on success.
 
 ## Benchmarking
 
-revoq ships **one** benchmark binary with two modes, and is deliberate about what
-each one is allowed to claim.
+The latency benchmark has two modes, and is deliberate about what each one is
+allowed to claim.
+
+The reference tuned run below reports 177 ns p99 in the recommended separate-core
+topology, with host details and reproduction scripts included. Low-latency claims
+without the machine are not useful.
 
 **Portable mode** — no root, no pinning, no hugepages. Good for functional checks
 and rough local comparisons. *Not* a source of host-to-host p99 claims.
@@ -215,21 +177,14 @@ Host: AWS `r7iz.metal-16xl` · Intel Xeon Gold 6455B · 3.90 GHz · Linux 6.17.0
 | separate physical cores — writer cpu2, reader cpu4 | 132 ns | 154 ns | 177 ns | 403 ns | 11007 ns | 133 ns |
 | SMT siblings — writer cpu4, reader cpu36 | 51 ns | 60 ns | 65 ns | 133 ns | 9961 ns | 50 ns |
 
-The **separate cores** configuration is the recommended production topology —
-the writer core is fully dedicated with no shared execution resources. The SMT
-siblings result (cpu4 and cpu36 share the same physical core and L1/L2 cache)
-is included to show the cache topology effect but is not representative of a
-real deployment.
+The **separate cores** row is the recommended production topology. The SMT row
+shows the cache-topology effect, not a real deployment shape. The `max` values
+(~10–11 us) are single-spike OS interrupt outliers; the tail story is in `p999`.
 
-The `max` values (~10–11 µs) are single-spike outliers from OS interrupts
-landing on a benchmark CPU. The tail story is in `p999`.
-
-We intentionally do **not** print headline latency figures here: they are only
-meaningful with the host that produced them. Reproduce them on your own hardware
-with `./scripts/check_system.sh` and `./scripts/collect_benchmark_env.sh`, and
-see [docs/benchmarking.md](docs/benchmarking.md) and
-[docs/tuning_overview.md](docs/tuning_overview.md) for the full methodology and
-host requirements.
+Reproduce the run with `./scripts/check_system.sh` and
+`./scripts/collect_benchmark_env.sh`, and see
+[docs/benchmarking.md](docs/benchmarking.md) and
+[docs/tuning_overview.md](docs/tuning_overview.md) for the full methodology.
 
 ## Status
 
@@ -239,11 +194,15 @@ change — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Commercial
 
-revoq is open source so the core engineering is visible and verifiable. RevoRacer
-builds low-latency trading infrastructure for trading teams and early-stage
-funds; if you want help integrating it, reproducing the benchmarks on your
-hardware, or tuning a host, talk to us at
-[revoracer.com](https://revoracer.com). Details:
+revoq is open source so teams can inspect the memory model, file format,
+benchmarks, and failure semantics. RevoRacer builds low-latency trading
+infrastructure for hedge funds and trading teams.
+
+We can help with revoq integration, benchmark reproduction on your hardware,
+Linux host tuning, feed-handler and execution-gateway paths, and custom same-host
+transport designs.
+
+Contact us through [revoracer.com](https://revoracer.com). Details:
 [docs/commercial_support.md](docs/commercial_support.md).
 
 ## License
