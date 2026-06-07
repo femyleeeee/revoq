@@ -34,7 +34,9 @@ jobs:
         run: CXX=/usr/bin/clang++-20 ./build.sh doctor
 
       - name: Build and run C++ tests
-        run: CXX=/usr/bin/clang++-20 ./build.sh test
+        run: |
+          ulimit -l unlimited
+          CXX=/usr/bin/clang++-20 ./build.sh test
 
   python:
     name: Python bindings + tests
