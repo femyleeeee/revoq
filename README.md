@@ -6,8 +6,7 @@
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](#quick-start)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-A file-backed, memory-mapped **IPC journal** for low-latency same-host trading
-systems.
+A file-backed, memory-mapped **IPC journal** for low-latency same-host messaging.
 
 ## At a glance
 
@@ -17,7 +16,6 @@ systems.
   telemetry.
 - One hot-path writer per journal, many independent readers; slow readers do not
   stall the writer.
-- Memory-mapped, file-backed pages with no per-message syscall.
 - Release/acquire publication: payload first, `length` last.
 - C++23 core, optional Python bindings, Linux tuned path, Apache-2.0 license.
 
@@ -68,14 +66,6 @@ CXX=/usr/bin/clang++-20 ./build.sh            # build
 CXX=/usr/bin/clang++-20 ./build.sh test       # run C++ tests
 CXX=/usr/bin/clang++-20 ./build.sh examples   # build C++ examples
 CXX=/usr/bin/clang++-20 ./build.sh python     # build + test Python bindings
-```
-
-A direct CMake build is also supported:
-
-```bash
-git submodule update --init --recursive
-cmake -S . -B build -DCMAKE_CXX_COMPILER=/usr/bin/clang++-20
-cmake --build build --parallel
 ```
 
 ### Write and read (C++)
