@@ -35,7 +35,7 @@ jobs:
 
       - name: Build and run C++ tests
         run: |
-          ulimit -l unlimited
+          sudo prlimit --memlock=unlimited:unlimited --pid $$
           CXX=/usr/bin/clang++-20 ./build.sh test
 
   python:
