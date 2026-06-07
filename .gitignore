@@ -1,0 +1,35 @@
+# Build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Test and coverage outputs
+Testing/
+CTestTestfile.cmake
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.venv/
+venv/
+
+# Editors and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local benchmark outputs
+benchmark-env*.txt
+*.csv

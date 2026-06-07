@@ -1,0 +1,121 @@
+
+#include <atomic>
+#include <catch2/catch_test_macros.hpp>
+#include <filesystem>
+#include <thread>
+
+#include "JournalReader.h"
+#include "JournalWriter.h"
+#include "test_helpers.h"
+
+using namespace revoq::journal;
+using namespace revoq::journal::test;
+namespace fs = std::filesystem;
+
+namespace {
+
+// Payload with an embedded invariant: check must equal ~value.
+// If the reader ever sees a torn frame (payload partially visible before
+// the release-store on length), check != ~value and we catch it.
+struct OrderMsg {
+  uint64_t value;
+  uint64_t check;
+};
+
+class OrderingFixture {
+public:
+  OrderingFixture() {
+    test_dir = fs::temp_directory_path() / "journal_ordering_test";
+    if (fs::exists(test_dir))
+      fs::remove_all(test_dir);
+    fs::create_directories(test_dir);
+    locator = std::make_shared<Locator>(test_dir.string());
+    location = Location::make(Mode::LIVE, Category::EXECUTION, "test",
+                              "ordering", locator);
+  }
+
+  ~OrderingFixture() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    try {
+      fs::remove_all(test_dir);
+    } catch (...) {
+    }
+  }
+
+  fs::path test_dir;
+  ILocatorPtr locator;
+  LocationPtr location;
+};
+
+} // namespace
+
+TEST_CASE_METHOD(OrderingFixture, "Frame publish ordering", "[ordering]") {
+  SECTION("Reader never observes a torn frame when length > 0") {
+    // Writer: single thread, background_threads=false (no retire thread, so
+    // the only concurrent activity is writer-thread vs. reader-thread on the
+    // shared mmap).
+    //
+    // 10,000 frames with DEFAULT 2MB pages (32,766 frames/page) → no rotation,
+    // keeping the test focused on the acquire/release path in the hot loop.
+    constexpr uint64_t N = 10'000;
+
+    JournalWriter<> writer(
+        location, 0,
+        JournalWriterOptions{.prefault = false, .background_threads = false});
+
+    std::atomic<int> torn_frames{0};
+    std::atomic<bool> reader_ready{false};
+
+    std::thread reader_thread([&]() {
+      // No background threads: reader is single-threaded, isolated to this
+      // thread. background_threads=false avoids any warmer/retire concurrency
+      // that could obscure a real ordering bug.
+      JournalReader reader(
+          JournalReaderOptions{.prefault = false, .background_threads = false});
+      reader.join(location, 0, 0);
+
+      // Signal writer: reader is positioned at frame 0 of page 1.
+      reader_ready.store(true, std::memory_order_release);
+
+      uint64_t count = 0;
+      while (count < N) {
+        if (!reader.isDataAvailable())
+          continue;
+
+        auto frame = reader.tryCurrentFrame();
+
+        // PageEnd frames appear during rotation; none expected here but guard
+        // defensively in case page sizes differ across machines.
+        if (static_cast<MsgType>(frame->getMsgType()) == MsgType::PageEnd) {
+          reader.next();
+          continue;
+        }
+
+        // When length > 0 (the acquire-load in hasData/isDataAvailable), all
+        // stores that preceded the release-store must be visible.  The payload
+        // invariant check == ~value catches any ordering violation.
+        if (frame->getDataLength() >= sizeof(OrderMsg)) {
+          const auto &msg = frame->data<OrderMsg>();
+          if (msg.check != ~msg.value)
+            torn_frames.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        ++count;
+        reader.next();
+      }
+    });
+
+    // Block until reader is positioned before writing, ensuring the test
+    // exercises concurrent access rather than a sequential post-hoc read.
+    while (!reader_ready.load(std::memory_order_acquire)) {
+    }
+
+    for (uint64_t i = 0; i < N; ++i) {
+      OrderMsg msg{i, ~i};
+      publish(writer, static_cast<int64_t>(i + 1), MsgType::Trade, msg);
+    }
+
+    reader_thread.join();
+    REQUIRE(torn_frames.load() == 0);
+  }
+}
