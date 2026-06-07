@@ -12,7 +12,7 @@
 #include "JournalWriter.h"
 
 namespace py = pybind11;
-using namespace racer::journal;
+using namespace revoq::journal;
 
 // ── FrameSnap ────────────────────────────────────────────────────────────────
 // Snapshot of a Frame taken before advancing the reader.  The live Frame
