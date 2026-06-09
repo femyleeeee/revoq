@@ -348,16 +348,16 @@ private:
       }
       page_warmer_->updateCurrentPage(new_page_id);
     } else {
-      SPDLOG_INFO("No warmer - load page normally");
+      SPDLOG_DEBUG("No warmer - load page normally");
       next_page = Page::load(location_, dest_id_, new_page_id, true, prefault_);
     }
 
     if (current_page_) {
       uintptr_t page_base = current_page_->address();
       uintptr_t border = page_base + page_size_ - FRAME_ALIGNMENT;
-      SPDLOG_INFO("rotatePage: current_frame_address_={:#x}, page_base={:#x}, "
-                  "border={:#x}",
-                  current_frame_address_, page_base, border);
+      SPDLOG_TRACE("rotatePage: current_frame_address_={:#x}, page_base={:#x}, "
+                   "border={:#x}",
+                   current_frame_address_, page_base, border);
       assert(current_frame_address_ <= border);
       try {
         auto *end_hdr = std::launder(
